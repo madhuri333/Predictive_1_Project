@@ -1,0 +1,86 @@
+---
+title: "Project - MSiA 401 Predictive Analytics-1"
+author: "Madhuri Gupta"
+date: "November 20, 2016"
+output: pdf_document
+---
+
+### Reading and Cleaning Data 
+
+I read the data from "donation data" into "donation" data frame.   
+
+```{r, echo=TRUE}
+# Read Data and load first few rows
+donate <- read.csv("donation data.csv")
+dmef <-  read.csv("dmef1code.csv")
+#Removing type=* from CODETYPE
+dmef <- dmef[!dmef$CODETYPE=="*", ]
+#Re-factoring keeps only 5 levels
+dmef$CODETYPE <- factor(dmef$CODETYPE)
+#Make missing CNDOL2/3 = 0
+donate[is.na(donate$CNDOL2), "CNDOL2"] <- 0
+donate[is.na(donate$CNDOL3), "CNDOL3"] <- 0
+```
+  
+**Replacing codes for CNCOD, SLCOD**  
+  
+```{r, echo=TRUE}
+code <- function(x){
+    x <- as.data.frame(x)
+    names(x) <- "CODE"
+    temp <- join(x, dmef, by = "CODE")
+    temp <- temp$CODETYPE
+    return(temp)
+}
+library(plyr)
+donate$CNCOD1 <- code(donate$CNCOD1)
+donate$CNCOD2 <- code(donate$CNCOD2)
+donate$CNCOD3 <- code(donate$CNCOD3)
+donate$SLCOD1 <- code(donate$SLCOD1)
+donate$SLCOD2 <- code(donate$SLCOD2)
+donate$SLCOD3 <- code(donate$SLCOD3)
+
+library(Amelia)
+#missmap(donate)
+#saved the image as mismap.pdf to be attached with report
+```
+  
+  
+It can be observed that data related to $2^{nd}$ and $3^{rd}$ contribution codes has the most missing values so these variables will not be considered further for inclusion in predictors for the model. Furthermore, the variables "CNDAT" and "CNMON" has perfect negative correlation so only one of them ("CNMON") will be considered. Also variable "ID", "STATCODE" shall not be used in predictive model.      
+  
+    
+```{r, echo=TRUE}
+#Looking at the correlation between numeric variables being considered (incl TARGET)
+cor_mat <- round(cor(donate[, c(1,2,3,4,11,12,13,17,20,23,24)]),3)
+test <- cor_mat>0.7
+```
+  
+  
+It can be observed that there is high correlation (>0.8) between (Largest, Latest contribution) and (Times contributed, Months since first contribution). We would choose to keep Latest contribution and Times contributed for the analysis.   
+   
+   
+```{r, echo=T}
+#Removing least useful variables based on above analysis
+donate_trim <- donate[,c(1,2,4,5,11,12,13,14,15,17,19,20,24)]
+
+```    
+    
+    
+**Divide data into training and test dataset**  
+  
+  
+```{r, echo=T}
+n <- 3
+test_index <- seq(n, nrow(donate_trim), by = n)
+train <- donate_trim[-test_index, ]
+test <- donate_trim[test_index, ]
+```     
+    
+    
+    
+    
+    
+    
+    
+    
+**Thank you**
