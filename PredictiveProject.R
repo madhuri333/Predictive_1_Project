@@ -41,3 +41,4 @@ cor(data.frame(trainset[,numericvars]))
 #Logistic regression - estimating the probability of someone donating
 fit1 <- glm(TARGDOL_BIN ~ CNDOL1 + CNCOD1 + CNDAT1 + CNTMLIF + SLCOD1 + REGION + SEX + CNMONL, data = trainset, family = binomial)
 pred1 <- predict(fit1, data=testset)
+
