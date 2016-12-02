@@ -1,7 +1,5 @@
 exp_TARGDOL <- numeric()
 
-prob <- nrow(training_over0)/nrow(donation)
-
 get_exp_targol <- function(mr.model, bin.model, is.log = FALSE) {
   
   ## predict donations using MULTIPLE REGRESSION MODEL
