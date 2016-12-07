@@ -7,8 +7,8 @@ output: pdf_document
 
 ### Reading and Cleaning Data 
 
-I read the data from "donation data" into "donation" data frame.   
-
+We read the data from "donation data.csv" into "donation" and "dmef1code.csv" into "dmef" dataframe.   
+  
 ```{r, echo=TRUE}
 # Read Data and load first few rows
 donate <- read.csv("donation data.csv")
@@ -39,34 +39,66 @@ donate$CNCOD3 <- code(donate$CNCOD3)
 donate$SLCOD1 <- code(donate$SLCOD1)
 donate$SLCOD2 <- code(donate$SLCOD2)
 donate$SLCOD3 <- code(donate$SLCOD3)
+```
+  
+  
+###Exploratory Analysis and Variable Selection for Logistic Regression Model  
+  
+  
+**Identifying variables with more than 50% missing values**  
+  
+  
+```{r, echo=T}
 
 suppressMessages(library(Amelia))
 #missmap(donate)
-#saved the image as mismap.pdf to be attached with report
+#Due to lasrge number of data points, it takes a lot of time to run so
+#saved the image as mismap.pdf which has been added in report.
+
 ```
   
   
-It can be observed that data related to $2^{nd}$ and $3^{rd}$ contribution codes has the most missing values so these variables will not be considered further for inclusion in predictors for the model. Furthermore, the variables "CNDAT" and "CNMON" has perfect negative correlation so only one of them ("CNMON") will be considered. Also variable "ID", "STATCODE" shall not be used in predictive model.      
-  
-    
-```{r, echo=TRUE}
-#Looking at the correlation between numeric variables being considered (incl TARGET)
-cor_mat <- round(cor(donate[, c(1,2,3,4,11,12,13,17,20,23,24)]),3)
-test <- cor_mat>0.7
-```
-  
-  
-It can be observed that there is high correlation (>0.8) between (Largest, Latest contribution) and (Times contributed, Months since first contribution). We would choose to keep Latest contribution and Times contributed for the analysis.   
+It can be observed that data related to $2^{nd}$ and $3^{rd}$ contribution codes has the most missing values so these variables will not be considered further for inclusion in predictors for the model.  
    
+   
+**Logical trimming**   
+
+Variable "ID" can not make logical contribution to the model. After grouping STATES into 5 regions and running the model we found insignificant contribution from "STATCODE". So it shall not be used in predictive model.       
+  
+  
+**Correlation and Multicollinearity**   
+  
+  
+```{r, echo=TRUE}
+#Looking at the correlation between numeric variables being considered (not-incl TARGET)
+cor_mat <- round(cor(donate[, c(1,2,3,4,11,12,13,20,23,24)]),3)
+test <- cor_mat>0.8
+# Calculat VIF to check for multi-collinearity problem
+cor_inv <- round(solve(cor_mat), 3)
+
+cat("Checking diagonal entries on cor_mat inv matrix to be > 10:")
+print(diag(cor_inv)>10)
+```
+  
+  
+It can be observed that there no mutlicollinearity problem given all diagonal entries of $R^{-1}$ matrix are < 10. From the correlation matrix we note there is high correlation (>0.8) between (Largest, Latest contribution) and (Times contributed, Months since first contribution). We would choose to keep Latest contribution and Times contributed for the analysis. Further, the variables "CNDAT" and "CNMON" have perfect negative correlation so only one of them ("CNMON") will be considered.   
+   
+   
+**Dropping the variables and making a binary response variable = 1 if TARGDOL > 0**  
+  
    
 ```{r, echo=T}
-#Removing least useful variables based on above analysis
+#Removing least useful variables based on above analysis  
 donate_trim <- donate[,c(1,2,4,5,11,12,13,14,15,17,19,20,24)]
-
+donate_trim$DON_BIN <- as.numeric(donate_trim$TARGDOL>0)
 ```    
+  
+  
+###Model fitting - Logistic Regression  
+  
+Since we are to classify past donors as potential future donors or not, we decided to use Logistic regression model 
     
-    
-**Divide data into training and test dataset**  
+**Divide data into training and test dataset and removing missing value records**  
   
   
 ```{r, echo=T}
@@ -75,14 +107,17 @@ test_index <- seq(n, nrow(donate_trim), by = n)
 train <- donate_trim[-test_index, ]
 test <- donate_trim[test_index, ]
 test_complete <- test[complete.cases(test), ] 
-train$DON_BIN <- as.numeric(train$TARGDOL>0)
 train_complete <- train[complete.cases(train), ]
+
 ```     
     
+    
+**Cross Validation (10-fold) for robust coefficients**    
     
   
 ```{r, echo=T}
 library(caret)
+#10-fold Cross Validation
 ctrl <- trainControl(method = "repeatedcv", number = 10, savePredictions = F)
 
 mod_fit1 <- train(DON_BIN ~ .-TARGDOL ,  data=train_complete, method="glm", family="binomial",
@@ -90,56 +125,121 @@ mod_fit1 <- train(DON_BIN ~ .-TARGDOL ,  data=train_complete, method="glm", fami
 
 
 fit1 <- glm(form = DON_BIN~.-TARGDOL, family = "binomial", data = train)
+summary(mod_fit1)
 summary(fit1)
-newdata <- train
-predicted_DON_BIN <- predict(fit1, newdata, type = "response") 
+cat("Both models - cross-validated and non cross-validated are same. This implies model is stable.")
+```
+  
+  
+**Model Performance using AUC**  
+  
+  
+```{r, echo=T}  
+library(pROC)
+plot.roc(mod_fit1$finalModel$y, mod_fit1$finalModel$fitted.values, xlab="1-Specificity")
+cat("AUC = 0.7329")  
 
+```
+   
+   
+**Find $p^{*}$**   
+  
+   
+```{r, echo=T}
+
+#p* option vector for narrowing range down:
 p <- seq(0.1, 0.9, by = 0.1)
+
 cost <-  function(p_value, c1, c2){
+  #Confusion Matrix for one value of "p", c1, c2 = cost of false positive and negative resp
   tab <- table(mod_fit1$finalModel$y, mod_fit1$finalModel$fitted.values > p_value)
   c <- c1*tab[1,2] + c2*tab[2,1]
-  precision <- tab[2,2]/sum(tab[,2])
-  recal <- tab[2,2]/sum(tab[2,])
-  ccr <- (sum(diag(tab))/sum(tab))
-  f <- 2*precision*recal/(precision+recal)
-  cat("P:", precision,"R:", recal,"CCR:",ccr,"F:",f)
   return(c)
 }
 
-# cost data frame:
+# Cost data frame:
 cost_df <- data.frame("p_cutoff"=p)
 cost_df$Cost_0.2 <- sapply(p, function(x) cost(x,1,5))
 # To be able to compare the costs I choose ratio such that their sum is 6 so c1=c2=3 
 cost_df$Cost_1 <- sapply(p, function(x) cost(x,3,3))
 cost_df$Cost_5 <- sapply(p, function(x) cost(x,5,1))
 
-# plotting against p*
+# Plotting against p*
 
 plot(cost_df$p_cutoff, cost_df$Cost_5, xlab = "p*", ylab = "Costs", type = "l", col="blue")
 lines(cost_df$p_cutoff, cost_df$Cost_1, type = "l", col="green")
 lines(cost_df$p_cutoff, cost_df$Cost_0.2, type = "l", col="red")
 legend("top", c("ratio 0.2","ratio 1", "ratio 5"), col=c("red","green","blue"), lty=1, cex=0.9)
+```
+   
+   
+We observe that $p^{*}$ varies with c1 and c2. In our case it is more expensive to missclassify a donor as non-donor because we do not want to loose donation so we will keep c2 > c1. Probable values of $p^{*}$ lie in the range [0.15, 0.30] We then calculated the CCR, F-score for this range with a interval of 0.025.     
+   
+   
+```{r, echo=T}
 
-# taking p* at 0.3 for maximizing F score
-#This aligns with the objective that a 
-tab <- table(mod_fit1$finalModel$y, mod_fit1$finalModel$fitted.values > 0.3)
+p <- seq(0.15, 0.3, by = 0.025)
+
+perf_measure <-  function(p_value){
+  #Confusion Matrix for one value of "p"
+  tab <- table(mod_fit1$finalModel$y, mod_fit1$finalModel$fitted.values > p_value)
+  precision <- tab[2,2]/sum(tab[,2])
+  recal <- tab[2,2]/sum(tab[2,])
+  ccr <- (sum(diag(tab))/sum(tab))
+  f <- 2*precision*recal/(precision+recal)
+  ccr <- round(ccr,4)
+  f <- round(f,4)
+  cat("For p* = ", p_value, " CCR: ", ccr," F-score: ", f)
+  print("")
+}
+
+
+sapply(p, function(x) perf_measure(x))
+
+```
+   
+   
+On observing the outputs we can see F-score is maximized around $p^{*}$ = 0.275. We choose F-score as the criterion because the train and test data set are unbalanced and there are much more non-contributors than donors (27%). So we choose this value as cut-off probability.     
+   
+   
+```{r, echo=TRUE}
+
+#taking p* at 0.275 for maximizing F score
+
+tab <- table(mod_fit1$finalModel$y, mod_fit1$finalModel$fitted.values > 0.275)
 ccr <- sum(diag(tab))/sum(tab)
 precision <- tab[2,2]/sum(tab[,2])
 recal <- tab[2,2]/sum(tab[2,])
+f <- 2*precision*recal/(precision+recal)
+ccr <- round(ccr,4)
+f <- round(f,4)
+cat("Corresponding CCR and F-score are: ", ccr, "and ", f, " respectively." )
 
-library(pROC)
-plot.roc(train_complete$DON_BIN, fit1$fitted.values, xlab="1-Specificity")
-
-test_pred <- predict(fit1, newdata = test_complete, type = "response")
-tab1 <- table(test_don_bin, test_pred > 0.3)
+```
+  
+  
+###Model Validation on Test-set  
+  
+  
+```{r, echo=T}  
+test_pred <- predict(mod_fit1, newdata = test_complete, type = "raw")
+tab1 <- table(test_complete$DON_BIN, test_pred > 0.275)
 ccr <- sum(diag(tab1))/sum(tab1)
 precision <- tab1[2,2]/sum(tab1[,2])
 recal <- tab1[2,2]/sum(tab1[2,])
-
+f <- 2*precision*recal/(precision+recal)
+ccr <- round(ccr,4)
+f <- round(f,4)
+tab1
+cat("Corresponding CCR and F-score for Test-data are: ", ccr, "and ", f, " respectively." )
 
 ```         
+  
     
     
+    
+###Multiple Linear Regression Model  
+  
     
 ```{r, echo=T}    
 # Multiple Regression Data
